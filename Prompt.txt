@@ -1,0 +1,4 @@
+based on this pdf file make the website and for the quiz generation using LLM API: Gemini API (gunakan endpoint resmi: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview: generateContent). 
+Implement google page login, use supabase for storing the user data that will be displayed on the dashboard. 
+And make so that if user is logged in, redirect to dashboard page, and have access to download the question and have a explanation on the question that got wrong. 
+If user not logged in, then just display the score.
