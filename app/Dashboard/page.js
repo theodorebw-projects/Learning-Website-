@@ -18,7 +18,7 @@ export default function Dashboard() {
   const [topic, setTopic] = useState('Fungsi Kuadrat & Transformasi Geometri')
   const [datePreset, setDatePreset] = useState('Today')
   const [duration, setDuration] = useState('45m')
-  const [timeSlot, setTimeSlot] = useState('04:00 PM')
+  const [timeSlot, setTimeSlot] = useState('16:00')
 
   const [scheduledSessions, setScheduledSessions] = useState([])
   const [quizSessions, setQuizSessions] = useState([])
@@ -57,7 +57,9 @@ export default function Dashboard() {
             userVisibleOnly: true,
             applicationServerKey: urlBase64ToUint8Array(publicVapidKey)
           })
-
+        }
+        
+        if (subscription) {
           await fetch('/Api/subscribe', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -146,7 +148,7 @@ export default function Dashboard() {
       .eq('id', sessionId)
       
     if (!error) {
-      setScheduledSessions(scheduledSessions.filter(s => s.id !== sessionId))
+      setScheduledSessions(prev => prev.filter(s => s.id !== sessionId))
       showToast('Session removed from schedule.')
     } else {
       showToast('Failed to remove session.')
@@ -166,8 +168,43 @@ export default function Dashboard() {
 
       const targetUrl = `/Practice/session?grade=${encodeURIComponent(level)}&topic=${encodeURIComponent(session.topic)}&length=10`
 
-      // Send a test push notification (can be modified to fire exactly at the scheduled time using a backend task queue)
+      // Calculate delay until the scheduled time
+      const now = new Date()
+      const scheduledTime = new Date()
+      
+      const [hours, minutes] = session.time.split(':')
+      scheduledTime.setHours(parseInt(hours, 10))
+      scheduledTime.setMinutes(parseInt(minutes, 10))
+      scheduledTime.setSeconds(0)
+
+      if (session.date === 'Tomorrow') {
+        scheduledTime.setDate(scheduledTime.getDate() + 1)
+      } else if (session.date !== 'Today' && session.date !== 'Pick') {
+        const parsedDate = new Date(session.date)
+        if (!isNaN(parsedDate)) {
+          scheduledTime.setFullYear(parsedDate.getFullYear(), parsedDate.getMonth(), parsedDate.getDate())
+        }
+      }
+
+      let delay = scheduledTime.getTime() - now.getTime()
+      
+      // Allow up to a 60 second grace period if they selected the current minute
+      if (delay >= -60000 && delay < 0) {
+        delay = 1000 // trigger almost immediately
+      } else if (delay < 0) {
+        showToast('The scheduled time has already passed.')
+        return
+      }
+
       setTimeout(() => {
+        // Fallback local browser notification
+        if ('Notification' in window && Notification.permission === 'granted') {
+          new Notification('Study Reminder!', { 
+            body: `Time to start your ${session.subject} session: ${session.topic}`,
+            icon: '/favicon.ico'
+          })
+        }
+
         fetch('/Api/send-notification', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -177,7 +214,9 @@ export default function Dashboard() {
             url: targetUrl
           })
         })
-      }, 5000) // Send after 5 seconds for demonstration
+        
+        handleDeleteSession(session.id)
+      }, delay)
     }
   }
 
@@ -199,9 +238,9 @@ export default function Dashboard() {
   return (
     <div className="w-full min-h-screen bg-[#FDFBF7] text-[#2F3D3C] font-sans pb-20">
       {toastMessage && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 bg-[#2F3D3C] text-[#FDFBF7] px-6 py-3 rounded-full shadow-lg z-50 flex items-center gap-2">
-          <CheckCircle2 className="w-5 h-5 text-green-400" />
-          {toastMessage}
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-md bg-[#2F3D3C] text-[#FDFBF7] px-4 md:px-6 py-3 rounded-2xl shadow-lg z-50 flex items-start sm:items-center gap-3 text-sm md:text-base">
+          <CheckCircle2 className="w-5 h-5 text-green-400 shrink-0 mt-0.5 sm:mt-0" />
+          <span className="flex-1 break-words">{toastMessage}</span>
         </div>
       )}
 
@@ -441,16 +480,13 @@ export default function Dashboard() {
                 <div className="text-sm font-bold text-[#7B8B88] flex items-center gap-1">
                   <Clock className="w-4 h-4" /> Start Slot:
                 </div>
-                <div className="flex gap-2 overflow-x-auto pb-2">
-                  {['09:00 AM', '02:30 PM', '04:00 PM', '07:00 PM'].map(t => (
-                    <button
-                      key={t}
-                      onClick={() => setTimeSlot(t)}
-                      className={`px-4 py-2 rounded-full text-xs font-bold transition-colors ${timeSlot === t ? 'bg-[#3A4E4C] text-white' : 'bg-[#EAECE6] text-[#7B8B88] hover:bg-[#DCDEDB]'}`}
-                    >
-                      {t}
-                    </button>
-                  ))}
+                <div className="flex gap-2 pb-2">
+                  <input
+                    type="time"
+                    value={timeSlot}
+                    onChange={(e) => setTimeSlot(e.target.value)}
+                    className="px-4 py-2 rounded-xl text-xs font-bold border border-[#EBEAE4] bg-[#FAFAEF] text-[#2F3D3C] focus:outline-none focus:border-[#3A4E4C] transition-colors"
+                  />
                 </div>
               </div>
             </div>
