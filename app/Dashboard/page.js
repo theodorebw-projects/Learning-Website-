@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/utils/supabase/client'
@@ -23,6 +23,7 @@ export default function Dashboard() {
   const [scheduledSessions, setScheduledSessions] = useState([])
   const [quizSessions, setQuizSessions] = useState([])
   const [toastMessage, setToastMessage] = useState('')
+  const activeTimers = useRef({})
 
   // Push notifications helpers
   const publicVapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY
@@ -155,68 +156,78 @@ export default function Dashboard() {
     }
   }
 
+  const scheduleLocalTimer = (session) => {
+    if (!session || !session.time) return
+    if (activeTimers.current[session.id]) return
+
+    const now = new Date()
+    const scheduledTime = new Date()
+    const [hours, minutes] = session.time.split(':')
+    scheduledTime.setHours(parseInt(hours, 10))
+    scheduledTime.setMinutes(parseInt(minutes, 10))
+    scheduledTime.setSeconds(0)
+
+    if (session.date === 'Tomorrow') {
+      scheduledTime.setDate(scheduledTime.getDate() + 1)
+    } else if (session.date !== 'Today' && session.date !== 'Pick') {
+      const parsedDate = new Date(session.date)
+      if (!isNaN(parsedDate)) {
+        scheduledTime.setFullYear(parsedDate.getFullYear(), parsedDate.getMonth(), parsedDate.getDate())
+      }
+    }
+
+    let delay = scheduledTime.getTime() - now.getTime()
+    if (delay < -60000) return
+    if (delay < 0) delay = 1000
+
+    const timerId = setTimeout(() => {
+      if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification('Study Reminder!', { 
+          body: `Time to start your ${session.subject} session: ${session.topic}`,
+          icon: '/favicon.ico'
+        })
+      }
+
+      const targetUrl = `/Practice/session?grade=${encodeURIComponent(level)}&topic=${encodeURIComponent(session.topic)}&length=10`
+      
+      fetch('/Api/send-notification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: 'Study Reminder!',
+          message: `Time to start your ${session.subject} session: ${session.topic}`,
+          url: targetUrl
+        })
+      })
+      
+      handleDeleteSession(session.id)
+      delete activeTimers.current[session.id]
+    }, delay)
+
+    activeTimers.current[session.id] = timerId
+  }
+
+  useEffect(() => {
+    scheduledSessions.forEach(session => {
+      scheduleLocalTimer(session)
+    })
+    
+    return () => {
+      Object.values(activeTimers.current).forEach(clearTimeout)
+      activeTimers.current = {}
+    }
+  }, [scheduledSessions])
+
   const handleRemindMe = async (session) => {
     showToast(`Reminder set for ${session.topic} at ${session.time}`)
 
-    // Request permission and subscribe if necessary
     if (Notification.permission === 'default') {
       await Notification.requestPermission()
     }
 
     if (Notification.permission === 'granted') {
       await subscribeUserToPush()
-
-      const targetUrl = `/Practice/session?grade=${encodeURIComponent(level)}&topic=${encodeURIComponent(session.topic)}&length=10`
-
-      // Calculate delay until the scheduled time
-      const now = new Date()
-      const scheduledTime = new Date()
-      
-      const [hours, minutes] = session.time.split(':')
-      scheduledTime.setHours(parseInt(hours, 10))
-      scheduledTime.setMinutes(parseInt(minutes, 10))
-      scheduledTime.setSeconds(0)
-
-      if (session.date === 'Tomorrow') {
-        scheduledTime.setDate(scheduledTime.getDate() + 1)
-      } else if (session.date !== 'Today' && session.date !== 'Pick') {
-        const parsedDate = new Date(session.date)
-        if (!isNaN(parsedDate)) {
-          scheduledTime.setFullYear(parsedDate.getFullYear(), parsedDate.getMonth(), parsedDate.getDate())
-        }
-      }
-
-      let delay = scheduledTime.getTime() - now.getTime()
-      
-      // Allow up to a 60 second grace period if they selected the current minute
-      if (delay >= -60000 && delay < 0) {
-        delay = 1000 // trigger almost immediately
-      } else if (delay < 0) {
-        showToast('The scheduled time has already passed.')
-        return
-      }
-
-      setTimeout(() => {
-        // Fallback local browser notification
-        if ('Notification' in window && Notification.permission === 'granted') {
-          new Notification('Study Reminder!', { 
-            body: `Time to start your ${session.subject} session: ${session.topic}`,
-            icon: '/favicon.ico'
-          })
-        }
-
-        fetch('/Api/send-notification', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            title: 'Study Reminder!',
-            message: `Time to start your ${session.subject} session: ${session.topic}`,
-            url: targetUrl
-          })
-        })
-        
-        handleDeleteSession(session.id)
-      }, delay)
+      scheduleLocalTimer(session)
     }
   }
 
