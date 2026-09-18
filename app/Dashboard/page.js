@@ -60,7 +60,7 @@ export default function Dashboard() {
             applicationServerKey: urlBase64ToUint8Array(publicVapidKey)
           })
         }
-        
+
         if (subscription) {
           await fetch('/Api/subscribe', {
             method: 'POST',
@@ -80,7 +80,7 @@ export default function Dashboard() {
       try {
         const supabase = createClient()
         const { data, error } = await supabase.auth.getUser()
-        
+
         if (error) {
           console.error("Auth error:", error)
         } else if (data?.user) {
@@ -134,7 +134,7 @@ export default function Dashboard() {
     if (!error && data) {
       setScheduledSessions([data[0], ...scheduledSessions])
       showToast('Block added to your learning rhythm.')
-      
+
       if ('Notification' in window) {
         if (Notification.permission === 'default') {
           Notification.requestPermission().then(perm => {
@@ -158,7 +158,7 @@ export default function Dashboard() {
       .from('scheduled_sessions')
       .delete()
       .eq('id', sessionId)
-      
+
     if (!error) {
       setScheduledSessions(prev => prev.filter(s => s.id !== sessionId))
       showToast('Session removed from schedule.')
@@ -173,14 +173,14 @@ export default function Dashboard() {
 
     const now = new Date()
     const scheduledTime = new Date()
-    
+
     let hours = 0
     let minutes = 0
     const isPM = /pm/i.test(session.time)
     const isAM = /am/i.test(session.time)
     const cleanTime = session.time.replace(/[^0-9:]/g, '')
     const parts = cleanTime.split(':')
-    
+
     if (parts.length >= 2) {
       hours = parseInt(parts[0], 10) || 0
       minutes = parseInt(parts[1], 10) || 0
@@ -200,7 +200,13 @@ export default function Dashboard() {
     }
 
     let delay = scheduledTime.getTime() - now.getTime()
-    if (delay < -60000) return
+    
+    // Automatically delete expired schedules (older than 1 minute) when loaded
+    if (delay < -60000) {
+      handleDeleteSession(session.id)
+      return
+    }
+    
     if (delay < 0) delay = 1000
 
     const timerId = setTimeout(() => {
@@ -224,17 +230,42 @@ export default function Dashboard() {
           osc.start()
           osc.stop(ctx.currentTime + 0.6)
         }
-      } catch (e) {}
+      } catch (e) { }
 
-      if ('Notification' in window && Notification.permission === 'granted') {
-        new Notification('Practice Time!', { 
-          body: `Time to start your ${session.subject} session: ${session.topic}`,
-          icon: '/favicon.ico'
-        })
+      try {
+        if ('Notification' in window && Notification.permission === 'granted') {
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.ready.then(reg => {
+              if (reg && reg.showNotification) {
+                reg.showNotification('Practice Time!', {
+                  body: `Time to start your ${session.subject} session: ${session.topic}`,
+                  icon: '/favicon.ico'
+                })
+              } else {
+                new Notification('Practice Time!', {
+                  body: `Time to start your ${session.subject} session: ${session.topic}`,
+                  icon: '/favicon.ico'
+                })
+              }
+            }).catch(() => {
+              new Notification('Practice Time!', {
+                body: `Time to start your ${session.subject} session: ${session.topic}`,
+                icon: '/favicon.ico'
+              })
+            })
+          } else {
+            new Notification('Practice Time!', {
+              body: `Time to start your ${session.subject} session: ${session.topic}`,
+              icon: '/favicon.ico'
+            })
+          }
+        }
+      } catch (err) {
+        console.error('Local notification error:', err)
       }
 
       const targetUrl = `/Practice/session?grade=${encodeURIComponent(level)}&topic=${encodeURIComponent(session.topic)}&length=10`
-      
+
       fetch('/Api/send-notification', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -243,8 +274,8 @@ export default function Dashboard() {
           message: `Time to start your ${session.subject} session: ${session.topic}`,
           url: targetUrl
         })
-      }).catch(() => {})
-      
+      }).catch(() => { })
+
       handleDeleteSession(session.id)
       delete activeTimers.current[session.id]
     }, delay)
@@ -256,7 +287,7 @@ export default function Dashboard() {
     scheduledSessions.forEach(session => {
       scheduleLocalTimer(session)
     })
-    
+
     return () => {
       Object.values(activeTimers.current).forEach(clearTimeout)
       activeTimers.current = {}
@@ -293,7 +324,7 @@ export default function Dashboard() {
 
   return (
     <div className="w-full min-h-screen bg-[#FDFBF7] text-[#2F3D3C] font-sans pb-20">
-      
+
       {/* Alarm Modal */}
       {alarmSession && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-[#2F3D3C]/40 backdrop-blur-sm">
