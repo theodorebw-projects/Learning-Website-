@@ -23,6 +23,7 @@ export default function Dashboard() {
   const [scheduledSessions, setScheduledSessions] = useState([])
   const [quizSessions, setQuizSessions] = useState([])
   const [toastMessage, setToastMessage] = useState('')
+  const [alarmSession, setAlarmSession] = useState(null)
   const activeTimers = useRef({})
 
   // Push notifications helpers
@@ -133,6 +134,16 @@ export default function Dashboard() {
     if (!error && data) {
       setScheduledSessions([data[0], ...scheduledSessions])
       showToast('Block added to your learning rhythm.')
+      
+      if ('Notification' in window) {
+        if (Notification.permission === 'default') {
+          Notification.requestPermission().then(perm => {
+            if (perm === 'granted') subscribeUserToPush()
+          })
+        } else if (Notification.permission === 'granted') {
+          subscribeUserToPush()
+        }
+      }
     }
   }
 
@@ -162,10 +173,22 @@ export default function Dashboard() {
 
     const now = new Date()
     const scheduledTime = new Date()
-    const [hours, minutes] = session.time.split(':')
-    scheduledTime.setHours(parseInt(hours, 10))
-    scheduledTime.setMinutes(parseInt(minutes, 10))
-    scheduledTime.setSeconds(0)
+    
+    let hours = 0
+    let minutes = 0
+    const isPM = /pm/i.test(session.time)
+    const isAM = /am/i.test(session.time)
+    const cleanTime = session.time.replace(/[^0-9:]/g, '')
+    const parts = cleanTime.split(':')
+    
+    if (parts.length >= 2) {
+      hours = parseInt(parts[0], 10) || 0
+      minutes = parseInt(parts[1], 10) || 0
+      if (isPM && hours < 12) hours += 12
+      if (isAM && hours === 12) hours = 0
+    }
+
+    scheduledTime.setHours(hours, minutes, 0, 0)
 
     if (session.date === 'Tomorrow') {
       scheduledTime.setDate(scheduledTime.getDate() + 1)
@@ -181,8 +204,30 @@ export default function Dashboard() {
     if (delay < 0) delay = 1000
 
     const timerId = setTimeout(() => {
+      // Show in-app alert
+      setAlarmSession(session)
+
+      // Play audio chime
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext
+        if (AudioCtx) {
+          const ctx = new AudioCtx()
+          const osc = ctx.createOscillator()
+          const gain = ctx.createGain()
+          osc.type = 'sine'
+          osc.frequency.setValueAtTime(587.33, ctx.currentTime)
+          osc.frequency.setValueAtTime(880, ctx.currentTime + 0.15)
+          gain.gain.setValueAtTime(0.3, ctx.currentTime)
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6)
+          osc.connect(gain)
+          gain.connect(ctx.destination)
+          osc.start()
+          osc.stop(ctx.currentTime + 0.6)
+        }
+      } catch (e) {}
+
       if ('Notification' in window && Notification.permission === 'granted') {
-        new Notification('Study Reminder!', { 
+        new Notification('Practice Time!', { 
           body: `Time to start your ${session.subject} session: ${session.topic}`,
           icon: '/favicon.ico'
         })
@@ -194,11 +239,11 @@ export default function Dashboard() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          title: 'Study Reminder!',
+          title: 'Practice Time!',
           message: `Time to start your ${session.subject} session: ${session.topic}`,
           url: targetUrl
         })
-      })
+      }).catch(() => {})
       
       handleDeleteSession(session.id)
       delete activeTimers.current[session.id]
@@ -248,6 +293,36 @@ export default function Dashboard() {
 
   return (
     <div className="w-full min-h-screen bg-[#FDFBF7] text-[#2F3D3C] font-sans pb-20">
+      
+      {/* Alarm Modal */}
+      {alarmSession && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-[#2F3D3C]/40 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border border-[#EBEAE4] text-center">
+            <div className="w-16 h-16 bg-[#52C0A5]/20 text-[#1E564F] rounded-2xl flex items-center justify-center mx-auto mb-4 animate-bounce">
+              <Bell className="w-8 h-8" />
+            </div>
+            <div className="text-xs font-bold text-[#52C0A5] uppercase tracking-widest mb-1">Practice Time Reached!</div>
+            <h3 className="text-xl font-bold text-[#2F3D3C] mb-2">{alarmSession.subject}</h3>
+            <p className="text-sm text-[#596A68] mb-6">{alarmSession.topic}</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setAlarmSession(null)}
+                className="flex-1 py-3.5 rounded-xl border border-[#EBEAE4] text-[#7B8B88] font-bold text-sm hover:bg-[#FAFAEF] transition-colors"
+              >
+                Dismiss
+              </button>
+              <Link
+                href={`/Practice/session?grade=${encodeURIComponent(level)}&topic=${encodeURIComponent(alarmSession.topic)}&length=10`}
+                onClick={() => setAlarmSession(null)}
+                className="flex-1 py-3.5 rounded-xl bg-[#4B635F] text-white font-bold text-sm hover:bg-[#3A4E4C] transition-colors flex items-center justify-center gap-1 shadow-sm"
+              >
+                Start Practice Now
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
+
       {toastMessage && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-md bg-[#2F3D3C] text-[#FDFBF7] px-4 md:px-6 py-3 rounded-2xl shadow-lg z-50 flex items-start sm:items-center gap-3 text-sm md:text-base">
           <CheckCircle2 className="w-5 h-5 text-green-400 shrink-0 mt-0.5 sm:mt-0" />
